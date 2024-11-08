@@ -1,0 +1,365 @@
+---
+title: "Group 5450-2 - Project"
+author: "Carli M., Krauß J.B., Rückerl J.L.S.A., Takács B. & Tappeiner A."
+date: "May 9th, 2023"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the Data
+
+First we load the provided data-set and the packages that we will employ:
+
+```{r Loading Data and Libraries, warning=F, message=F, results=F}
+# Libraries
+if (!require("psych")) install.packages("psych")
+if (!require("rpart")) install.packages("rpart")
+if (!require("rpart.plot")) install.packages("rpart.plot")
+if (!require("caret")) install.packages("caret")
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("corrplot")) install.packages("corrplot")
+library("caret")
+library("rpart")
+library("rpart.plot")
+library("randomForest")
+library("corrplot")
+library("psych")
+
+# Load data
+setwd("/Users/manuel_c/Documents/00_university/01_BBE_WU/4th/data\ analytics/data_project")
+hr_data <- read.csv("WA_Fn-UseC_-HR-Employee-Attrition.csv")
+```
+
+## 0 - Project Aim, Business Context & Evaluation Metric
+
+The following project aims to build a model for the company IBM, which should be able to predict whether an  employee is likely to leave the company or not, given the indicators in the existing  data-set for IBM employees. Therefore, the aim is to understand the behavior of employees and identify influencing factors that make a prediction possible on whether an employee is likely to quit or not. Ultimately, the goal is to enable IBM to minimize the rate of unintended and unforeseen employee departures and to identify possibilities to improve the working environment for the employees.
+
+The following sections examine different methods for modelling. Whether a model can be deemed good or not will be decided based on the evaluation metric "recall". The latter is the metric of choice in this context, since false negatives have to be avoided at all costs. This is the case, since this would have the most severe implications for the company, since IBM would not have expected that an employee will leave and unexpectedly looses valuable employees, despite the model predicting that they won't leave the company.
+
+## 1 - Exploratory Analysis
+
+In the following section we examine and describe the data set, the variables it contains and the properties as well as the summary statistics of the individual variables. First, we examine the structure of the data set:
+
+```{r Structure Data}
+# Structure
+str(hr_data)
+summary(hr_data)
+# Check for Duplicates
+sum(duplicated(hr_data))
+```
+
+The data-set consists of 35 variables and has 1470 observations and is tidy. The summary of the data-set shows that there are no missing values in the data-set. Furthermore, there are no duplicates.
+
+There appear to be several categorical variables. Next, we examine the different categories of the categorical variables:
+
+```{r Table Categorical Variables}
+# Table Categorical Variables
+table(hr_data$Attrition)
+table(hr_data$BusinessTravel)
+table(hr_data$Department)
+table(hr_data$EducationField)
+table(hr_data$Gender)
+table(hr_data$MaritalStatus)
+table(hr_data$Over18)
+table(hr_data$OverTime)
+```
+
+One can see that the data-set is very imbalanced in terms of our dependent variable `Attrition`. Roughly speaking, only about 16% of our observations are associated with `Attrition` being equal to "Yes". This could be problematic for the upcoming training of our models and must be kept in mind.
+
+For the further analysis we transform the categorical variables into factor variables in R and convert the whole data-set to a data.frame:
+
+```{r Convert Cat Var into Factor Variables}
+# Convert Categorical Variables into Factor Variables
+hr_data$Attrition <- factor(hr_data$Attrition)
+hr_data$BusinessTravel <- factor(hr_data$BusinessTravel)
+hr_data$Department <- factor(hr_data$Department)
+hr_data$Education <- factor(hr_data$Education, levels = c(1, 2, 3, 4, 5), labels = c("Below College", "College", "Bachelor", "Master", "Doctor"))
+hr_data$EducationField <- factor(hr_data$EducationField)
+hr_data$EnvironmentSatisfaction <- factor(hr_data$EnvironmentSatisfaction, levels = c(1, 2, 3, 4), labels = c("Low", "Medium", "High", "Very High"))
+hr_data$Gender <- factor(hr_data$Gender)
+hr_data$JobInvolvement <- factor(hr_data$JobInvolvement, levels = c(1, 2, 3, 4), labels = c("Low", "Medium", "High", "Very High"))
+hr_data$JobRole <- factor(hr_data$JobRole, levels = unique(hr_data$JobRole))
+hr_data$JobSatisfaction <- factor(hr_data$JobSatisfaction, levels = c(1, 2, 3, 4), labels = c("Low", "Medium", "High", "Very High"))
+hr_data$PerformanceRating <- factor(hr_data$PerformanceRating, levels = c(1, 2, 3, 4), labels = c("Low", "Good", "Excellent", "Outstanding"))
+hr_data$RelationshipSatisfaction <- factor(hr_data$RelationshipSatisfaction, levels = c(1, 2, 3, 4), labels = c("Low", "Medium", "High", "Very High"))
+hr_data$WorkLifeBalance <- factor(hr_data$WorkLifeBalance, levels = c(1, 2, 3, 4), labels = c("Bad", "Good", "Better", "Best"))
+hr_data$MaritalStatus <- factor(hr_data$MaritalStatus)
+hr_data$OverTime <- factor(hr_data$OverTime)
+
+# Convert Dataset to Data-Frame
+hr_data <- as.data.frame(hr_data)
+```
+
+Next, we drop columns, i.e. variables, that are not relevant for our analysis or don't offer any value for predictions:
+
+- `DailyRate` (index = 4): Daily rate charged to external customers, not relevant for our research question.
+- `EmployeeCount` (index = 9): Does not offer any relevant information, since it is 1 for all the observations.
+- `EmployeeNumber` (index = 10): Does not offer any relevant information,, since it only represents the ID of employee. It does not have any predictive power, and it is not needed for joining additional data sets.  
+- `HourlyRate` (index = 13): Hourly rate charged to external customers, not relevant for our research question.
+- `MonthlyRate` (index = 20): Monthly rate charged to external customers, not relevant for our research question.
+- `Over18` (index = 22): Indicates, whether an employee is older than 18. Does not offer any relevant information, since it is "Yes" for all the observations.
+- `StandardHours` (index = 27): Does not offer any relevant information, since it is 80 for all the observations.
+
+```{r Drop  Columns}
+# Drop columns
+hr_data <- hr_data[,-c(4, 9, 10, 13, 20, 22, 27)]
+```
+
+The examination and computation of the corresponding summary statistics for the data set yield the following results:
+
+```{r}
+describe(hr_data, quant = c(0.25, 0.75))
+```
+
+Neither the beforehand conducted summary of the variables, nor the above shown description of the individual variables does suggest that outliers exist.
+
+Next, we visually compare each variable to the dependent variable `Attrition`:
+
+```{r}
+plot(Attrition ~ ., data = hr_data)
+```
+
+The plots suggest, that the variables `Age`, `Business Travel`, `Department`, `DistanceFromHome`, `EnvironmentSatisfaction`, `JobInvolvement`, `JobLevel`, `JobRole`, `JobSatisfaction`, `MaritalStatus`,  `MonthlyIncome`, `OverTime`, `StockOptionLevel`, `TotalWorkingYears`, `YearsAtCompany` and `YearsInCurrentRole` could be important for prediction.
+
+## 2 - Split Data
+
+In the following step, we perform a 80/20-split of our data, based on random selection, in order to separate the data into a training set and a test set: 
+
+```{r}
+set.seed(545002)
+n <- nrow(hr_data)
+n_train <- floor(n * 0.8)
+id_train <- sample(1:n, n_train)
+train_dat <- hr_data[id_train, ]
+test_dat <- hr_data[-id_train, ]
+```
+
+Given the imbalances in our data-set we described above, we perform upsampling on the training data-set and store it separately to use if for comparison purposes.
+
+```{r}
+train_dat_up <- upSample(x = train_dat[, -2],
+                    y = train_dat[, 2],
+                 yname = "Attrition")
+```
+
+## 3 - Training Models Without Upsampling 
+
+First, we build the Naive Bayes Model:
+
+```{r Manual Naive Bayes}
+fit_nb_man <- e1071::naiveBayes(Attrition ~ ., data = train_dat)
+fit_nb_man
+confusionMatrix(predict(fit_nb_man, test_dat), test_dat$Attrition, positive = "Yes")
+```
+
+Secondly, we build the Classification Tree model:
+
+```{r Classification Tree}
+fit_ct <- rpart(Attrition ~ ., data = train_dat)
+fit_ct_f <- rpart(Attrition ~ ., data = train_dat, control = list(cp = 0))
+printcp(fit_ct_f)
+rsq.rpart(fit_ct_f)
+rpart.plot(fit_ct, extra = 101)
+
+pred_ct <- factor(ifelse(predict(fit_ct, test_dat)[,2] >= 0.5, "Yes", "No"))
+```
+
+Next, we train the Logistic Regression, the knn and the Random Forest Model, based on 5-fold cross validation (*Note: We decided to hide the output of the following code chunk in order to declutter the report and improve readability.*):
+
+```{r Train Models, warning=F, results=F, message=F}
+# Define Training Control Params
+fit_control <- trainControl(method = "cv", number = 5)
+
+# Train Logistic Regression Model With Stepwise Variable Selection
+log_fit_c <- train(Attrition ~ ., 
+                   data = train_dat, 
+                   method = "glmStepAIC", 
+                   trControl = fit_control)
+
+# Train knn-Model for k from 2 to 20
+knn_fit <- train(Attrition ~ ., 
+                 data = train_dat, 
+                 method = "knn", 
+                 trControl = fit_control,
+                 tuneGrid = data.frame(k = c(2,4,6,8,10,12,14,16,18,20)),
+                 preProcess = c("center",  "scale"))
+
+# Train Random Forest
+mtry = round(sqrt(ncol(train_dat)-1), digits = 0)
+rf_fit <- train(Attrition ~ ., 
+                   data = train_dat, 
+                   method = "rf", 
+                   tuneGrid = data.frame(mtry = mtry),
+                   trControl = fit_control)
+```
+
+## 4 - Training Models With Upsampling 
+
+First, we build the Naive Bayes Model:
+
+```{r Manual Naive Bayes Upsampling}
+fit_nb_man_up <- e1071::naiveBayes(Attrition ~ ., data = train_dat_up)
+fit_nb_man_up
+confusionMatrix(predict(fit_nb_man_up, test_dat), test_dat$Attrition, positive = "Yes")
+```
+
+Secondly, we build the Classification Tree model:
+
+```{r Classification Tree Upsampling}
+fit_ct_up <- rpart(Attrition ~ ., data = train_dat_up)
+
+pred_ct_up <- factor(ifelse(predict(fit_ct_up, test_dat)[,2] >= 0.5, "Yes", "No"))
+```
+
+Next, we train the Logistic Regression, the knn and the Random Forest Model, based on 5-fold cross validation (*Note: We decided to hide the output of the following code chunk in order to declutter the report and improve readability.*):
+
+```{r Train Models Upsampling, warning=F, results=F, message=F}
+# Define Training Control Params
+fit_control <- trainControl(method = "cv", number = 5)
+
+# Train Logistic Regression Model With Stepwise Variable Selection
+log_fit_c_up <- train(Attrition ~ ., 
+                   data = train_dat_up, 
+                   method = "glmStepAIC", 
+                   trControl = fit_control)
+
+# Train knn-Model for k from 2 to 20
+knn_fit_up <- train(Attrition ~ ., 
+                 data = train_dat_up, 
+                 method = "knn", 
+                 trControl = fit_control,
+                 tuneGrid = data.frame(k = c(2,4,6,8,10,12,14,16,18,20)),
+                 preProcess = c("center",  "scale"))
+
+# Train Random Forest
+mtry = round(sqrt(ncol(train_dat)-1), digits = 0)
+rf_fit_up <- train(Attrition ~ ., 
+                   data = train_dat_up, 
+                   method = "rf", 
+                   tuneGrid = data.frame(mtry = mtry),
+                   trControl = fit_control)
+```
+
+# 5 - Compare Model Performance
+
+First, we generate the confusion matrices for the different models:
+
+```{r}
+# Generate Confusion Matrices Without Upsampling
+cfm_logit  <- confusionMatrix(predict(log_fit_c, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_knn <- confusionMatrix(predict(knn_fit, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_nb <- confusionMatrix(predict(fit_nb_man, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_ct <- confusionMatrix(pred_ct, test_dat$Attrition, positive = "Yes")
+cfm_rf <- confusionMatrix(predict(rf_fit, test_dat), test_dat$Attrition, positive = "Yes")
+
+# Show Confusion Matrices Without Upsampling
+cfm_logit
+cfm_knn
+cfm_nb
+cfm_ct
+cfm_rf
+
+# Generate Confusion Matrices With Upsampling
+cfm_logit_up  <- confusionMatrix(predict(log_fit_c_up, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_knn_up <- confusionMatrix(predict(knn_fit_up, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_nb_up <- confusionMatrix(predict(fit_nb_man_up, test_dat), test_dat$Attrition, positive = "Yes")
+cfm_ct_up <- confusionMatrix(pred_ct_up, test_dat$Attrition, positive = "Yes")
+cfm_rf_up <- confusionMatrix(predict(rf_fit_up, test_dat), test_dat$Attrition, positive = "Yes")
+
+# Show Confusion Matrices With Upsampling
+cfm_logit_up
+cfm_knn_up
+cfm_nb_up
+cfm_ct_up
+cfm_rf_up
+```
+
+The performance metrics for our models based on the training data without upsampling are the following:
+
+```{r}
+data.frame("Accuracy" = c(cfm_logit$overall["Accuracy"], cfm_knn$overall["Accuracy"], 
+                          cfm_nb$overall["Accuracy"], cfm_ct$overall["Accuracy"],
+                          cfm_rf$overall["Accuracy"]),
+           "No.Info.Rate" = c(cfm_logit$overall["AccuracyNull"], cfm_knn$overall["AccuracyNull"], 
+                          cfm_nb$overall["AccuracyNull"], cfm_ct$overall["AccuracyNull"],
+                          cfm_rf$overall["AccuracyNull"]),
+           "Recall" = c(cfm_logit$byClass["Sensitivity"], cfm_knn$byClass["Sensitivity"], 
+                          cfm_nb$byClass["Sensitivity"], cfm_ct$byClass["Sensitivity"],
+                          cfm_rf$byClass["Sensitivity"]),
+           "Precision" = c(cfm_logit$byClass["Pos Pred Value"], cfm_knn$byClass["Pos Pred Value"], 
+                          cfm_nb$byClass["Pos Pred Value"], cfm_ct$byClass["Pos Pred Value"],
+                          cfm_rf$byClass["Pos Pred Value"]),
+           row.names = c("Logistic Regression", "KNN", "Naive Bayes", "Classification Tree", "Random Forest (Class.)")) 
+```
+
+The performance metrics for our models based on the training data with upsampling are the following:
+
+```{r}
+data.frame("Accuracy" = c(cfm_logit_up$overall["Accuracy"], cfm_knn_up$overall["Accuracy"], 
+                          cfm_nb_up$overall["Accuracy"], cfm_ct_up$overall["Accuracy"],
+                          cfm_rf_up$overall["Accuracy"]),
+           "No.Info.Rate" = c(cfm_logit_up$overall["AccuracyNull"], cfm_knn_up$overall["AccuracyNull"], 
+                          cfm_nb_up$overall["AccuracyNull"], cfm_ct_up$overall["AccuracyNull"],
+                          cfm_rf_up$overall["AccuracyNull"]),
+           "Recall" = c(cfm_logit_up$byClass["Sensitivity"], cfm_knn_up$byClass["Sensitivity"], 
+                          cfm_nb_up$byClass["Sensitivity"], cfm_ct_up$byClass["Sensitivity"],
+                          cfm_rf_up$byClass["Sensitivity"]),
+           "Precision" = c(cfm_logit_up$byClass["Pos Pred Value"], cfm_knn_up$byClass["Pos Pred Value"], 
+                          cfm_nb_up$byClass["Pos Pred Value"], cfm_ct_up$byClass["Pos Pred Value"],
+                          cfm_rf_up$byClass["Pos Pred Value"]),
+           row.names = c("Logistic Regression", "KNN", "Naive Bayes", "Classification Tree", "Random Forest (Class.)")) 
+```
+
+The results show, that the imbalance of the underlying data-set is highly problematic. In our context, it is most important for the company to avoid false negatives, i.e. to avoid that the model predicts that an employee won't leave the company although he will do so. Therefore the recall has to be used to evaluate the model performance.
+In terms of the recall metric only the models trained on the upsampled data seem to be considerable. Although the results are still not very good, they are considerably higher than those of the models trained on the data-set without upsampling. As the result shows, the Logistic Regression as well as the Naive Bayes model, trained on the upsampled data, provide the best results with a recall value of approximately 76%. In terms of recall they perform equally well, but regarding accuracy and precision the logistic regression model performs considerably better. Therefore, one can conclude that the logistic regression model, trained on the upsampled data, is the most promising one. 
+
+The summary of the best performing model is shown below:
+
+```{r}
+summary(log_fit_c_up$finalModel)
+```
+
+The output suggests that the variables `Business_Travel`, `Department`, `Education`, `EducationField`, `EnivronmentSatisfaction`, `Gender`, `JobInvolvement`, `JobRole`, `JobSatisfaction`, `MaritalStatus`, `MonthlyIncome`, `NumCompaniesWorked`, `OverTimeYes`, `PercentSalaryHike`, `RelationshipSatisfaction`, `TotalWorkingYears`, `TrainingTimesLastYear`, `WorkLife_Balance`, `YearsAtCompany`, `YearsInCurrentRole`, `YearsSinceLastPromotion` and `YearsWithCurrManager` are important predictors for whether an employee is likely to leave the company or not.
+
+## 6 - Business Implications and Outlook
+
+**Business Implications**
+
+As described above, the final model identified several variablse that are of signifiance importance for the prediciton whether an  employee is likely to quit or not. Following, an interpretation of the possible business implications and  remedies are given per variable of interest:
+
+- `Business_Travel`: The analysis showed that frequent busines travel significantly increases the likelihood of attrition. The company should evaluate whether business travel can be reduced. Especially in the light of digitization and the pandemic disruption of the work-culture, substituting business travel by e.g. online meetings should be implemented where possible.
+- `Department`: The departments "Research and Development" as well as "Sales" should be monitored especially close and the working environment should be improved.
+- `Education`: The model suggests that college educated as well as people with tertiary education with a master degree are less likely to leave. However, since mostly special education requirements apply to each job, no  concrete measures are advised.
+- `EducationField`: Since mostly special education requirements apply to each job, no  concrete measures are advised.
+- `EnivronmentSatisfaction`: A medium to very-high environment satisfaction is desirable in order to decrease the likelihood of attrition. Further studies should be conducted to better understand which factors influence environment satisfaction.
+- `Gender`: The model suggests that gender is an influencing factor, but since high-diversity is desirable and the present data-set is imbalanced in this regard, no further measures are advisable.
+- `JobInvolvement`: A medium to very-high environment satisfaction is desirable in order to decrease the likelihood of attrition. Further studies should be conducted to better understand which factors influence job involvement
+- `JobRole`: The findings suggest that different job roles are connected with different likelihoods of attrition. However, since a job-role is inevitably associated with a certain job, no further measures are suggested.
+- `JobSatisfaction`:  A medium to very-high job satisfaction is desirable in order to decrease the likelihood of attrition. Further studies should be conducted to better understand which factors influence job satisfaction.
+- `MaritalStatus`: The findings suggest that single employees are more likely to quit the job than married ones.
+- `MonthlyIncome`: An increase in monthly income is associated with a decrease of the likelihood of attrition. In connection with the fact that monthly income can always be easily adjusted by the company, adjustment of the monthly pay could be a key remedy for counteracting attrition.
+- `NumCompaniesWorked`: The findings seem to be intuitive, as it is more likely that a employee leaves the company, if he has already worked for a lot of companies beforehand.
+- `OverTimeYes`: Doing overtime significantly increases the likelihood of attrition. Therefore, it should be the aim to reduce or eliminate overtime wherever possible.
+- `PercentSalaryHike`: Accordingly to the findings for monthly income, large-percentage salary hikes are associated with a significant decrease of attrition. 
+- `RelationshipSatisfaction`: A medium to very-high relationship satisfaction is desirable in order to decrease the likelihood of attrition. Further studies should be conducted to better understand which factors influence relationship satisfaction.
+- `TotalWorkingYears`: Seemingly intuitive: The longer an employee has been in the workforce, the less likely he is to leave.
+- `TrainingTimesLastYear`: The findings underline that continuing education is important. Therefore, the company should aim to offer regular and attractive training programs to the employees.
+- `WorkLife_Balance`: If employees conceive their work-life-balance to be good, better or best, it will significantly reduce the likelihood of attrition. Since the present inquiry does not suggest, how employees exactly evaluate their perceived work-life-balance, further studies should be in the interest of the company.
+- `YearsAtCompany`: The longer an employee has been in for the company, the more likely he is to leave. 
+- `YearsInCurrentRole`: If an employee has already stayed for a long time in his present role, he is less likely to leave. However, this must be read in context with the previous finding concerning `YearsAtCompany`.
+- `YearsSinceLastPromotion`: The  longer an employee hasn't been promoted the more likely he is to leave. Therefore, the company should aim to regularly promote employees, if their performance allows it.
+- `YearsWithCurrManager`: The findings suggest that probably loyalty also affects employee behavior, since it is less likely that employees leave the company, the longer they have worked for their current manager.
+
+The above presented findings show, that the model and the results provide valuable insights for the company, which answer the research questions, we set out to answer.
+
+**Outlook and Suggestions**
+
+The above presented model already performs reasonably well. However, an improvement of the model performance is definitely desirable in order to achieve better and more helpful information for IBM. The models currently are especially limited by the huge imbalances in the underlying data-set, i.e. a lot of information is present for employees that did not leave the company and relative few information is provided for employees that left. Possible measures:
+
+- Collect more data to increase available information for employees that left and to reduce the imbalance in the data-set.
+- IBM could try to additionally gather available data-sets on employee data from other companies or studies. Although attrition is most certainly always tied to the individual environment and  context of a company, examining comparable data-sets, e.g. of other companies - insofar available - could lead to interesting insights into universal factors and reliable prediction parameters for employee attrition.
